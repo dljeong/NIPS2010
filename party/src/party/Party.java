@@ -9,6 +9,11 @@ import java.io.PrintWriter;
 import java.net.ServerSocket;
 import java.net.Socket;
 import java.util.ArrayList;
+import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
+import java.util.concurrent.Semaphore;
 
 import jsc.distributions.Laplace;
 import Jama.Matrix;
@@ -18,19 +23,27 @@ public class Party implements Runnable {
 	private final String server = "127.0.0.1";
 
 	private int id, K;
-	private int n, d;
+	private ArrayList<Integer> perm;
+	private int n, d,v;
 	private ArrayList<String[]> localData;
 	private ArrayList<double[]> localX;
 	private ArrayList<String> localY;
 	private Matrix theta;
+	private Matrix eta;
 	private Matrix combined = null;
+	private Matrix eta_combined = null;
 	private String positiveClass = "D";
 	private double lambda = 00;
 	private Socket sc;
 	private ArrayList<double[]> testX;
 	private ArrayList<String> testY;
 	private int testn;
-	
+	private int[] personal_k = {3,33};
+	private int[] public_k = {7,33};
+	private int[] public_k_charlie = {7,33};
+	private double EPSILON = 0.25;
+	private AtomicInteger shared;
+	private Semaphore sema;
 	
 	//Acting like socket, temporary variable
 	private comm Comm;
@@ -38,6 +51,7 @@ public class Party implements Runnable {
 	public void setComm(comm a) {
 		Comm = a;
 	}
+	
 
 	private void readData(String filename) {
 		
@@ -49,7 +63,7 @@ public class Party implements Runnable {
 		try {
 			
 			br = new BufferedReader(new FileReader(dataFile));
-			//br.readLine();
+
 
 			int i=0;
 			while((line = br.readLine()) != null) {
@@ -78,6 +92,7 @@ public class Party implements Runnable {
 				
 				i++;
 			}
+
 
 		} catch(FileNotFoundException e) {
 			e.printStackTrace();
@@ -113,6 +128,7 @@ public class Party implements Runnable {
 		theta = new Matrix(d, 1, 0);
 
 		double[][] X = (double[][])localX.toArray(new double[0][0]);
+	
 
 		for(int i=0;i<30;i++) { // 30 is iteration number, In many case, 10~15 is enough
 			
@@ -213,11 +229,11 @@ public class Party implements Runnable {
 				
 				ratio /= K;
 				
-				//System.out.println(Integer.toString(K) + " " + msg + " " + Double.toString(ratio));
+				//System.out.print(Integer.toString(K) + " " + msg + " ");
 				if(msg.equals("combined")) {
 					System.out.println(Double.toString(ratio));
 				} else {
-					System.out.print(Double.toString(ratio) + ",");
+				//	System.out.print(Double.toString(ratio) + ",");
 				}
 				
 			} catch (IOException e) {
@@ -246,7 +262,7 @@ public class Party implements Runnable {
 		}
 	}
 	
-	public Party(int id, int K) {
+	public Party(int id, int K,ArrayList<Integer> p,AtomicInteger shared, Lock lock,Semaphore sema) {
 		this.id = id; this.K = K;
 		this.n = 0;
 		this.localData = new ArrayList<String[]>();
@@ -255,13 +271,35 @@ public class Party implements Runnable {
 		this.testX = new ArrayList<double[]>();
 		this.testY = new ArrayList<String>();
 		this.testn = 0;
+		this.perm = p;
+		this.shared = shared;
+		this.sema = sema;
 	}
 	
 	public int KK = 10000;
 	
-	public void sendMytheta() {
+
+	public void send_to_charlie(String msg, int i) {
+		Comm.send_to_charlie(msg, i);
+	}
+	public void send(String msg, int i) {
+		Comm.send(msg, i);
+	}
+	
+	public String recv() {
+		return Comm.recv(id);
+	}
+	public void send2(String msg, int i) {
+		Comm.send2(msg, i);
+	}
+	
+	public String recv2() {
+		return Comm.recv2(id);
+	}
+	
+	public void sendMatrix(Matrix ma) {
 		if(id >= KK) return;
-		postal p = new postal(theta, id);
+		postal p = new postal(ma, id);
 		String msg = p.getString();
 		for(int i=0;i<K;i++) {
 			if(id != i) {
@@ -269,34 +307,142 @@ public class Party implements Runnable {
 			}
 		}
 	}
-	
-	public void recvOtherstheta() {
+	public void recvOthersMatrix(Matrix ma) {
 		//to check whether one of parties send more than once;
-//		boolean[] check = new boolean[K];
+		//boolean[] check = new boolean[K];
 		if(id >= KK) return;
 		for(int i=0;i<K;i++) {
 			if(i != id) {
-				postal p = new postal(Comm.recv(id));
-			
+				String et=Comm.recv(id);
+			//	System.out.println(et);
+				postal p = new postal(et);
 				Matrix others = p.getTheta();
-				combined.plusEquals(others);
+				ma.plusEquals(others);
 			}
 		}
 		
-		combined.timesEquals((double)1/(double)K);
+		//combined.timesEquals((double)1/(double)K);
+	}
+
+	private synchronized void sync() throws InterruptedException
+	{
+		if (shared.getAndIncrement() != K - 1)
+		{	
+			//System.out.println("shared "+shared.get()+ " "+Integer.toString(K));
+			sema.acquire();
+		
+		}
+		else
+		{
+			
+			
+			sema.release(K-1);
+			shared.set(0);
+			
+			
+		}
 	}
 	
 	private void combining() {
-		combined = theta;
-		sendMytheta();
-		recvOtherstheta();
+		
+		int a,b;
+		combined = theta.copy();
+		
+		// step 1
+		Random rand = new Random();
+		a = rand.nextInt(n) + 1;
+		b = n - a;
+		//System.out.println("Send Im "+Integer.toString(id)+ " I send to "+Integer.toString(perm.get(id)) +" a : "+Integer.toString(a));
+		//step1
+		
+		send2(Integer.toString(a),perm.get(id));
+		
+		send_to_charlie(Integer.toString(b),perm.get(id));
+		Integer aa =  Integer.parseInt(recv2());
+		send_to_charlie(Integer.toString(HomomorphicEncrypt.encrypt(public_k[0],public_k[1] , aa)),id);
+		Integer a_plus_r = Integer.parseInt(recv());
+		send_to_charlie(Integer.toString(HomomorphicEncrypt.encrypt(personal_k[0],personal_k[1] , a_plus_r)),id);
+		
+		//step2
+		String vv = recv();
+		//System.out.println("Got first " + id);
+		//sync();
+
+		send2(vv,perm.indexOf(id));
+		
+
+		
+		
+		v = Integer.parseInt(recv2());
+		
+		
+		get_eta();
+		sendMatrix(eta);
+		
+		try {
+			sync();
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
+		
+		recvOthersMatrix(eta_combined);
+		if(id ==0)
+		{
+			Matrix s = new Matrix(d,1,0);//should change random integer;
+			for(int j=0;j<d;j++)
+			{
+				s.set(j, 0, HomomorphicEncrypt.encrypt(public_k_charlie[0], public_k_charlie[1],(int) s.get(j,0)));
+			}
+			Matrix send_value = theta.copy();
+			send_value.plusEquals(s);
+			for(int i =0; i < K;i++)
+			{
+				postal p = new postal(send_value, i);
+				String msg = p.getString();
+				send_to_charlie(msg,i);
+			}
+		}
+		
+		sendMatrix(theta);
+		recvOthersMatrix(combined);
+		combined.timesEquals((double)1/(double)K);
+		combined.plusEquals(eta_combined);
+
+	
+		
+
 	}
 	
+	private void get_eta()
+	{
+		Matrix a = new Matrix(d,1,0);
+		Laplace l =new Laplace(0,2/(EPSILON*n));
+		for(int i=0;i<d;i++)
+		{
+			a.set(i, 0, l.random());
+		}
+		eta = a.times((double)v);
+		eta_combined = eta.copy();
+	}
+
 	public void run() {
 		readData("letter-recognition.data");
 		train();
 		test(theta, "individual");
 		combining();
+		//System.out.print("combine "+ id+ " : ");
+		//for(int i =0;i<K;i++)
+		//{
+		//	System.out.print(eta_combined.get(i,0)+", ");
+		//}
+		//System.out.println("Done");
+		try {
+			sync();
+		} catch (InterruptedException e) {
+			// TODO Auto-generated catch block
+			e.printStackTrace();
+		}
 		test(combined, "combined");
 	}
 }
