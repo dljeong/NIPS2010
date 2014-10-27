@@ -59,13 +59,9 @@ public class PartyMain {
 		/*int K = 120;
 		
 		System.out.println("Creating " + Integer.toString(K) + " parties");*/
-		for(int j =0;j<=4;j++)
-		{
-			System.out.println("i = " +Integer.toString(j));
-			for(int i=10;i<=100;i+=10) {
+			for(int i=10;i<=50;i+=10) {
 				CreateParties(i);
 			}
-			System.out.println("");
-		}
+			
 	}
 }

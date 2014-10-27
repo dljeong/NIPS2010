@@ -32,8 +32,9 @@ public class Party implements Runnable {
 	private Matrix eta;
 	private Matrix combined = null;
 	private Matrix eta_combined = null;
-	private String positiveClass = "D";
-	private double lambda = 00;
+	//private String positiveClass = "A";
+	private String positiveClass = " 3";
+	private double lambda = 1;
 	private Socket sc;
 	private ArrayList<double[]> testX;
 	private ArrayList<String> testY;
@@ -41,7 +42,7 @@ public class Party implements Runnable {
 	private int[] personal_k = {3,33};
 	private int[] public_k = {7,33};
 	private int[] public_k_charlie = {7,33};
-	private double EPSILON = 0.25;
+	private double EPSILON = 0.1;
 	private AtomicInteger shared;
 	private Semaphore sema;
 	
@@ -70,12 +71,13 @@ public class Party implements Runnable {
 
 				String[] data = line.split(csvSpliter);
 				
-				String y = data[0];
-				
+				//String y = data[0];
+				String y = data[data.length - 1];
 				double[] X = new double[data.length - 1];
 				
 				for(int j=0;j<data.length-1;j++) {
-					X[j] = Float.valueOf(data[j+1]);
+					X[j] = Float.valueOf(data[j]);
+					//	X[j] = Float.valueOf(data[j+1]);
 				}
 
 				//String y = data[data.length - 1];
@@ -130,7 +132,7 @@ public class Party implements Runnable {
 		double[][] X = (double[][])localX.toArray(new double[0][0]);
 	
 
-		for(int i=0;i<30;i++) { // 30 is iteration number, In many case, 10~15 is enough
+		for(int i=0;i<50;i++) { // 30 is iteration number, In many case, 10~15 is enough
 			
 			Matrix grad = new Matrix(d, 1);
 			Matrix hessian = new Matrix(d, d);
@@ -181,21 +183,23 @@ public class Party implements Runnable {
 	private void test(Matrix theta, String msg) {
 		//Using training dataset as test dataset 
 
-		int count = 0;
-		
+		int true_positive = 0;
+		int true_negative = 0;
+		int has_positiveclass=0;
 		for(int i=0;i<testn;i++) {
 			double[] x = testX.get(i);
 			
 			double result = sigmoid( theta.transpose().getArray()[0], x );
-		
+			if(testY.get(i).equals(positiveClass))
+				has_positiveclass++;
 			if(result >= 0.5) {
 				if(testY.get(i).equals(positiveClass)) {
 				//if(testY.get(i).equals("A") || testY.get(i).equals("E") || testY.get(i).equals("O") || testY.get(i).equals("I") || testY.get(i).equals("U") ) {
-					count++;
+					true_positive++;
 				}
 			} else if(!testY.get(i).equals(positiveClass)) {
 			//} else if(!(testY.get(i).equals("A") || testY.get(i).equals("E") || testY.get(i).equals("O") || testY.get(i).equals("I") || testY.get(i).equals("U") )) {
-				count++;
+				true_negative++;
 			}
 		}
 
@@ -204,7 +208,10 @@ public class Party implements Runnable {
 			Socket[] sc = new Socket[K - 1];
 			BufferedReader in;
 			
-			double ratio = (double) count / (double)testn;
+			
+			double positive_ratio = (double) true_positive / (double)has_positiveclass;
+			double negative_ratio = (double) true_negative / (double)(testn-has_positiveclass);
+			double total_ratio = (double)(true_positive + true_negative)/testn;
 			
 			int clients = 0;
 			
@@ -218,7 +225,11 @@ public class Party implements Runnable {
 				for(int i=0;i<K-1;i++) {
 					in = new BufferedReader(new InputStreamReader(sc[i].getInputStream()));
 					String inLine = in.readLine();
-					ratio += Double.valueOf(inLine);
+					total_ratio += Double.valueOf(inLine);
+					inLine = in.readLine();
+					positive_ratio += Double.valueOf(inLine);
+					inLine = in.readLine();
+					negative_ratio += Double.valueOf(inLine);
 					in.close();
 				}
 				
@@ -227,11 +238,13 @@ public class Party implements Runnable {
 				}
 				ss.close();
 				
-				ratio /= K;
+				total_ratio /= K;
+				positive_ratio /= K;
+				negative_ratio /= K;
 				
 				//System.out.print(Integer.toString(K) + " " + msg + " ");
 				if(msg.equals("combined")) {
-					System.out.println(Double.toString(ratio));
+					System.out.println("total ratio : "+Double.toString(total_ratio)+" positive ratio : "+Double.toString(positive_ratio)+" negative ratio : "+Double.toString(negative_ratio));
 				} else {
 				//	System.out.print(Double.toString(ratio) + ",");
 				}
@@ -247,7 +260,9 @@ public class Party implements Runnable {
 				try {
 		 			sc = new Socket(server, 34444 + K);
 					PrintWriter out = new PrintWriter(sc.getOutputStream(), true);
-					out.println(Double.toString( (double)count / (double)testn ));
+					out.println(Double.toString( (double)(true_positive+true_negative) / (double)testn ));
+					out.println(Double.toString( (double)(true_positive) / (double)has_positiveclass ));
+					out.println(Double.toString( (double)(true_negative) / (double)(testn - has_positiveclass) ));
 					sc.close();
 					break;
 					
@@ -417,7 +432,7 @@ public class Party implements Runnable {
 	private void get_eta()
 	{
 		Matrix a = new Matrix(d,1,0);
-		Laplace l =new Laplace(0,2/(EPSILON*n));
+		Laplace l =new Laplace(0,2/(EPSILON*n*lambda));
 		for(int i=0;i<d;i++)
 		{
 			a.set(i, 0, l.random());
@@ -427,7 +442,8 @@ public class Party implements Runnable {
 	}
 
 	public void run() {
-		readData("letter-recognition.data");
+		//readData("letter-recognition.data");
+		readData("pendigits.tes.txt");
 		train();
 		test(theta, "individual");
 		combining();
